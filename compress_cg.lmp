@@ -1,0 +1,190 @@
+#This lammps script allows you to do the tensile simulation for MgZnCaSr BMG mechanical properties
+#developed by Prof. Shin-Pon Ju at NSYSU 2017/04/08
+#modified by Mr. Chen-Jia Yang at 4075-2 2017/10/11
+#include files:
+#1.NVTNPT.in
+#2. manipulate by perl 
+
+#output files:
+#1.00relax.dat --> check whether the initial relaxation is done.
+
+#modified on 11/28/2016
+
+#define parameters here
+log HEA.log ## Perl
+variable jumpname index compress_cg.lmp # for "jump" filename ==> Perl
+variable folder index output_compress
+variable samplepxx equal pxx
+variable samplepyy equal pyy
+variable samplepzz equal pzz
+variable currentT equal 300
+variable ts equal 0.001 # for units metal: 1fs 
+variable pdamp equal ${ts}*1000 
+shell mkdir ${folder}
+
+#INITIALIZATION
+
+units metal 
+dimension 3 
+boundary f f f
+atom_style atomic 
+atom_modify map array
+# ---------- Create Atoms ---------------------
+read_data 0508_20nm_noequal.data
+# define initial heights of two plains 
+variable high_temp equal bound(all,zmax)+2.522   #slightly higher than rcut
+variable ref_high equal ${high_temp}  #slightly higher than rcut
+variable low_temp equal bound(all,zmin)-2.522     #奈米粒子z的最小值
+variable zbound_dis equal bound(all,zmax)-bound(all,zmin)   #slightly higher than rcut
+
+variable ref_low equal ${low_temp}
+variable ref_width equal ${ref_high}-${low_temp}
+
+variable deform_ratio equal -0.005 # positive: tension, negative: compression
+variable deform_steps equal 250 
+variable totalE equal pe
+variable time_step equal 0.001 # for fire
+
+timestep ${time_step}  
+
+# ---------- Define Interatomic Potential --------------------- 
+                                               
+pair_style meam/c
+pair_coeff * *  ref.lib Pd Rh Co Ce Pt  Bestfitted_default_m14.meam Pd Rh Co Ce Pt                                                        
+
+neighbor 2.0 bin 
+neigh_modify delay 10 every 5 check yes one 5000
+
+comm_style      tiled
+balance 1.05 rcb
+
+#https://pdfs.semanticscholar.org/e51b/ecaecca25bc627797d689df884a36f541408.pdf
+#Morse parameters for diamond
+
+fix wallhi all wall/morse zhi ${ref_high} 2.423 2.555 2.522 3.0 units box
+fix walllo all wall/morse zlo ${ref_low} 2.423 2.555 2.522 3.0 units box
+fix_modify wallhi energy yes
+fix_modify walllo energy yes
+velocity all set 0.0 0.0 0.0 units box
+reset_timestep 0
+
+thermo 100
+thermo_style custom step temp pe 
+min_style	     cg
+minimize 1e-8 1e-8 50000 100000
+
+reset_timestep 0
+velocity all set 0.0 0.0 0.0 units box
+timestep ${time_step}  
+
+min_style	     fire
+minimize 1e-8 1e-8 2000 2000
+unfix wallhi
+unfix walllo
+
+shell cd ${folder}
+write_data freesurface.data
+shell cd .. 
+
+######## deformation simulation from here #######
+
+variable i loop ${deform_steps}
+
+label deform_i
+balance 1.05 rcb
+variable current_hi equal ${ref_high}+(${deform_ratio}*${ref_width})*(${i}-1)
+variable previous_hi equal ${ref_high}+(${deform_ratio}*${ref_width})*(${i})
+variable distance equal ${current_hi}-${ref_low}
+
+###########
+variable current_maxZ equal bound(all,zmax)
+variable Neg_minZ equal bound(all,zmin)*(-1)
+variable Pos_minZ equal bound(all,zmin)
+variable minZ_value equal ${Pos_minZ}
+displace_atoms all move 0 0 ${Neg_minZ} units box
+variable value atom v_previous_hi/v_current_hi
+variable movelength atom z*v_value
+set group all z v_movelength
+displace_atoms all move 0 0 ${minZ_value} units box
+
+#write_data scale_${i}.data
+##############
+fix wallhi all wall/morse zhi ${current_hi} 2.423 2.555 2.522 3.0 units box
+fix walllo all wall/morse zlo ${ref_low} 2.423 2.555 2.522 3.0 units box
+fix_modify wallhi energy yes
+fix_modify walllo energy yes
+velocity all set 0.0 0.0 0.0 units box
+reset_timestep 0
+thermo 100
+thermo_style custom step temp pe 
+min_style	     cg
+minimize 1e-8 1e-8 50000 100000
+
+timestep ${time_step}
+reset_timestep 0
+thermo_style custom step temp pe press v_samplepxx v_samplepyy v_samplepzz v_totalE v_zbound_dis
+velocity all set 0.0 0.0 0.0 units box
+min_style	     fire
+minimize 1e-8 1e-8 3000 3000
+
+## begin sampling and output data
+
+shell cd ${folder}
+
+
+velocity all set 0.0 0.0 0.0 units box
+dump 1 all custom 1 00stress_${i}.cfg id type x y z 
+thermo_style custom step temp pe press pxx pyy pzz v_totalE v_zbound_dis
+run 0
+undump 1
+
+#reset_timestep 0
+#run 0
+variable pxxGPa equal -$(pxx)/10000. #bar to Gpa
+variable pyyGPa equal -$(pyy)/10000.
+variable pzzGPa equal -$(pzz)/10000.
+print "lz: ${distance} zbound: ${zbound_dis} Vol: $(vol) PE: $(pe)  Pxx: ${pxxGPa} Pyy: ${pyyGPa} Pzz: ${pzzGPa} " append Strain_Stress.dat screen no
+
+#velocity all create 0.1 4928459 rot yes dist gaussian
+#timestep 0.001
+#fix 1 all nvt temp 1e-6 1e-6 0.1 #x 0.0 0.0 ${pdamp} y 0.0 0.0 ${pdamp}
+#fix ave all ave/time 10 10 100 v_totalE      #format                    0
+#fix avezbound all ave/time 10 10 100 v_zbound_dis      #format                    0
+#fix avexx all ave/time 10 10 100 v_samplepxx #format                    0
+#fix aveyy all ave/time 10 10 100 v_samplepyy #format                    0
+#fix avezz all ave/time 10 10 100 v_samplepzz #format                    0
+#thermo 100 
+#thermo_style custom step temp pe press v_samplepxx v_samplepyy v_samplepzz v_totalE v_zbound_dis
+#run 100
+#timestep ${time_step}
+#min_style	     fire
+#minimize 0 0 2000 2000
+
+#variable avePE equal f_ave
+#variable avezbound equal f_avezbound
+#variable avepxx equal f_avexx
+#variable avepyy equal f_aveyy
+#variable avepzz equal f_avezz
+#
+#variable pxxGPa equal -${avepxx}/10000. #bar to Gpa
+#variable pyyGPa equal -${avepyy}/10000.
+#variable pzzGPa equal -${avepzz}/10000.
+#print "lz: ${distance} zbound: ${avezbound} Vol: $(vol) PE: ${avePE}  Pxx: ${pxxGPa} Pyy: ${pyyGPa} Pzz: ${pzzGPa} " append Strain_Stress.dat screen no
+####################################
+#unfix ave
+#unfix avezbound
+#unfix avexx
+#unfix aveyy
+#unfix avezz
+#unfix wallhi
+#unfix walllo
+#unfix 1
+#dump 1 all custom 1 00stress_${i}.cfg id type x y z 
+#run 0
+#undump 1
+shell cd ..
+
+next i
+jump ${jumpname} deform_i
+
+print "Simulation done!!!"

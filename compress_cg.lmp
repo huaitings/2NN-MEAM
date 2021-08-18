@@ -50,7 +50,7 @@ timestep ${time_step}
 # ---------- Define Interatomic Potential --------------------- 
                                                
 pair_style meam/c
-pair_coeff * *  ref.lib Pd Rh Co Ce Pt  Bestfitted_default_m14.meam Pd Rh Co Ce Pt                                                        
+pair_coeff * *  ref.lib Al Mo Nb Ta Ti Zr  Bestfitted.meam Al Mo Nb Ta Ti Zr                                                      
 
 neighbor 2.0 bin 
 neigh_modify delay 10 every 5 check yes one 5000
